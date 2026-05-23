@@ -47,7 +47,7 @@ def main():
     st.markdown("""
     ## 🎯 How to Use
     
-    1. **Step 1**: Record your voice complaint in Hindi, Bengali, or Tamil
+    1. **Step 1**: Record your voice complaint (Auto Detect / Hindi / Bengali / Tamil / English)
     2. **Step 2**: Upload supporting evidence (wage slips, contracts, photos)
     3. **Step 3**: Click "Generate Documents" to create your legal notice
     4. **Step 4**: Download your legal notice and case summary
@@ -67,15 +67,39 @@ def main():
     with tab1:
         st.header("Step 1: Voice Recording")
         
-        audio_bytes, language = record_voice()
+        audio_bytes, language, typed_text = record_voice()
         
-        if audio_bytes:
+        if audio_bytes or (typed_text and typed_text.strip()):
             if st.button("🚀 Submit for Transcription", type="primary"):
-                session_id = submit_voice(audio_bytes, language)
+                session_id = submit_voice(audio_bytes, language, typed_text=typed_text)
                 if session_id:
                     st.session_state['session_id'] = session_id
                     st.session_state['step1_complete'] = True
                     st.rerun()
+
+        if st.session_state.get("session_id") and st.session_state.get("transcription"):
+            st.markdown("---")
+            st.subheader("📝 Transcription (editable)")
+            edited = st.text_area(
+                "Edit transcription if needed",
+                value=st.session_state.get("transcription", ""),
+                height=180,
+                key="edited_transcription"
+            )
+            if st.button("💾 Save Edited Transcription"):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE_URL}/api/status/{st.session_state['session_id']}/transcription",
+                        json={"transcription": edited},
+                        timeout=10
+                    )
+                    if resp.status_code == 200:
+                        st.session_state["transcription"] = edited
+                        st.success("✅ Transcription updated")
+                    else:
+                        st.error(f"❌ Failed to save transcription: {resp.text}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
     
     with tab2:
         st.header("Step 2: Evidence Upload")
@@ -99,29 +123,107 @@ def main():
         session_id = st.session_state.get('session_id')
         
         if not session_id:
-            st.warning("⚠️ Please complete Step 1 & 2 first")
+            st.warning("⚠️ Please complete Step 1 first")
         else:
             st.info(f"📋 Session ID: {session_id}")
+
+            with st.expander("🧠 Improve the case (add missing details / corrections)", expanded=True):
+                notes = st.text_area(
+                    "Add or correct details (manager name, company, address, dates, amounts, missing evidence description, etc.)",
+                    height=140,
+                    key="case_notes"
+                )
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("💾 Save Notes", use_container_width=True):
+                        try:
+                            resp = requests.post(
+                                f"{API_BASE_URL}/api/status/{session_id}/notes",
+                                json={"notes": notes},
+                                timeout=10
+                            )
+                            if resp.status_code == 200:
+                                st.success("✅ Notes saved")
+                            else:
+                                st.error(f"❌ Failed to save notes: {resp.text}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                with col_b:
+                    if st.button("❓ Suggest Missing Info", use_container_width=True):
+                        try:
+                            if notes and notes.strip():
+                                try:
+                                    requests.post(
+                                        f"{API_BASE_URL}/api/status/{session_id}/notes",
+                                        json={"notes": notes},
+                                        timeout=10
+                                    )
+                                except Exception:
+                                    pass
+
+                            start = requests.post(
+                                f"{API_BASE_URL}/api/status/{session_id}/questions",
+                                timeout=10
+                            )
+                            if start.status_code != 200:
+                                st.error(f"❌ Failed to start question generation: {start.text}")
+                            else:
+                                with st.spinner("Thinking about what might be missing..."):
+                                    deadline = time.time() + 120
+                                    while time.time() < deadline:
+                                        poll = requests.get(
+                                            f"{API_BASE_URL}/api/status/{session_id}/questions",
+                                            timeout=10
+                                        )
+                                        if poll.status_code != 200:
+                                            st.error(f"❌ Failed to fetch questions: {poll.text}")
+                                            break
+
+                                        payload = poll.json()
+                                        status = payload.get("status")
+                                        if status == "done":
+                                            result = payload.get("result") or {}
+                                            questions = result.get("questions", [])
+                                            missing_fields = result.get("missing_fields", [])
+                                            if missing_fields:
+                                                st.caption("Missing fields: " + ", ".join([str(x) for x in missing_fields]))
+
+                                            if questions:
+                                                st.subheader("Suggested questions")
+                                                for q in questions[:8]:
+                                                    st.write(f"- {q.get('question')}")
+                                                    ex = q.get("example_answer")
+                                                    if ex:
+                                                        st.caption(f"Example: {ex}")
+                                            else:
+                                                st.info("No missing info detected.")
+                                            break
+                                        if status == "error":
+                                            st.error(f"❌ Failed to generate questions: {payload.get('error')}")
+                                            break
+
+                                        time.sleep(2)
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
             
             col1, col2 = st.columns(2)
             
             with col1:
                 if st.button("📄 Generate Legal Notice & Case Summary", type="primary", use_container_width=True):
-                    with st.spinner("🔄 Generating documents..."):
-                        try:
-                            response = requests.post(
-                                f"{API_BASE_URL}/api/generate",
-                                json={"session_id": session_id},
-                                timeout=10
-                            )
-                            
-                            if response.status_code == 200:
-                                st.success("✅ Document generation started!")
-                                poll_for_completion(session_id)
-                            else:
-                                st.error(f"❌ Generation failed: {response.text}")
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
+                    try:
+                        response = requests.post(
+                            f"{API_BASE_URL}/api/generate",
+                            json={"session_id": session_id},
+                            timeout=10
+                        )
+                        
+                        if response.status_code == 200:
+                            st.success("✅ Document generation started!")
+                            poll_for_completion(session_id)
+                        else:
+                            st.error(f"❌ Generation failed: {response.text}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
             
             with col2:
                 if st.button("🔄 Check Status", use_container_width=True):
@@ -141,61 +243,92 @@ def main():
     - 🇮🇳 Hindi (हिंदी)
     - 🇮🇳 Bengali (বাংলা)
     - 🇮🇳 Tamil (தமிழ்)
+    - 🇬🇧 English
+    - 🌐 Auto Detect (best for mixed language)
     
     """)
 
 def poll_for_completion(session_id, interval=3, max_wait=300):
-    placeholder = st.empty()
+    status_box = st.empty()
+    progress_box = st.empty()
+    preview_box = st.empty()
+    progress_bar = st.progress(0.0)
     
     start_time = time.time()
     
+    def render_steps(status: str):
+        steps = [
+            ("pending", "Session created"),
+            ("transcribing", "Voice transcription"),
+            ("processing_evidence", "Evidence OCR"),
+            ("agents_running", "Agents processing"),
+            ("generating_documents", "Document generation"),
+            ("complete", "Complete"),
+        ]
+        
+        try:
+            current_index = [s[0] for s in steps].index(status)
+        except Exception:
+            current_index = 0
+        
+        lines = []
+        for i, (_, label) in enumerate(steps):
+            mark = "✅" if i < current_index else ("⏳" if i == current_index else "⬜")
+            lines.append(f"{mark} {label}")
+        return "\n".join(lines)
+    
     while time.time() - start_time < max_wait:
         try:
-            response = requests.get(f"{API_BASE_URL}/api/status/{session_id}", timeout=5)
+            response = requests.get(f"{API_BASE_URL}/api/status/{session_id}", timeout=10)
+            if response.status_code != 200:
+                status_box.warning(f"⚠️ Status check failed: {response.status_code}")
+                time.sleep(interval)
+                continue
             
-            if response.status_code == 200:
-                status_data = response.json()
-                status = status_data.get('status')
-                progress = status_data.get('progress', 0)
-                current_agent = status_data.get('current_agent', 'Unknown')
-                
-                if status == 'complete':
-                    placeholder.success("🎉 Documents generated successfully!")
-                    show_downloads(session_id)
-                    return True
-                elif status == 'error':
-                    placeholder.error("❌ Generation failed. Please try again.")
-                    return False
-                else:
-                    placeholder.info(f"⏳ {current_agent} - {progress}% complete")
-                    
-                    progress_bar = st.progress(progress / 100.0)
-                    status_container = st.empty()
-                    
-                    with status_container.container():
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Status", status)
-                        with col2:
-                            st.metric("Progress", f"{progress}%")
-                        with col3:
-                            st.metric("Agent", current_agent)
-                    
-                    time.sleep(interval)
-                    st.rerun()
-            else:
-                placeholder.warning(f"⚠️ Status check failed: {response.status_code}")
-                break
-                
+            status_data = response.json()
+            status = status_data.get('status', 'pending')
+            progress = int(status_data.get('progress', 0))
+            current_agent = status_data.get('current_agent', 'Unknown')
+            preview = status_data.get('output_preview')
+            
+            status_box.markdown(f"**Current**: {current_agent} | **Status**: {status}")
+            progress_bar.progress(min(max(progress / 100.0, 0.0), 1.0))
+            progress_box.text(render_steps(status))
+            
+            if preview:
+                preview_box.text(preview)
+            
+            if status == 'complete':
+                status_box.success("🎉 Documents generated successfully!")
+                show_downloads(session_id)
+                return True
+            if status == 'error':
+                err = status_data.get("error")
+                status_box.error(f"❌ Generation failed{': ' + err if err else ''}")
+                return False
+            
+            time.sleep(interval)
+            
         except Exception as e:
-            placeholder.error(f"❌ Error checking status: {str(e)}")
-            break
+            status_box.error(f"❌ Error checking status: {str(e)}")
+            return False
     
-    placeholder.warning("⏰ Timeout reached. Please check status manually.")
+    status_box.warning("⏰ Timeout reached. Please click 'Check Status'.")
     return False
 
 def show_downloads(session_id):
     st.success("✅ Documents ready for download!")
+    
+    try:
+        docs = requests.get(f"{API_BASE_URL}/api/status/{session_id}/documents", timeout=10)
+        if docs.status_code == 200:
+            payload = docs.json()
+            with st.expander("👀 Preview: Legal Notice"):
+                st.text_area("Draft Notice", payload.get("draft_notice", ""), height=280, disabled=True)
+            with st.expander("👀 Preview: Case Summary"):
+                st.text_area("Case Summary", payload.get("case_summary", ""), height=280, disabled=True)
+    except Exception:
+        pass
     
     col1, col2, col3 = st.columns(3)
     

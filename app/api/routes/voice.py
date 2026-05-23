@@ -59,7 +59,7 @@ async def transcribe_voice(
             audio_data=audio_data,
             language=detected_lang if detected_lang != "auto" else None
         )
-        
+
         transcription = transcription_result.get('text', '')
         confidence = transcription_result.get('confidence', 0.0)
         
@@ -91,6 +91,50 @@ async def transcribe_voice(
             status_code=500,
             detail=f"Transcription failed: {str(e)}"
         )
+
+@router.post("/text", response_model=VoiceResponse)
+async def submit_text(
+    transcription: str = Form(..., description="Typed complaint text"),
+    language: Optional[str] = Form(None, description="Language code: hi, bn, ta, en, or auto"),
+    session_id: Optional[str] = Form(None, description="Existing session ID or create new")
+):
+    try:
+        if language and language not in SUPPORTED_LANGUAGES + ["auto"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported language. Choose from: {', '.join(SUPPORTED_LANGUAGES)}, or 'auto'"
+            )
+
+        cleaned = (transcription or "").strip()
+        if len(cleaned) < 10:
+            raise HTTPException(status_code=400, detail="Text is too short. Please provide more details.")
+
+        detected_lang = language or "auto"
+        if detected_lang == "auto":
+            detected_lang = "en"
+
+        if not session_id:
+            session_id = session_manager.create_session(language=detected_lang)
+        else:
+            session = session_manager.get_session(session_id)
+            if not session:
+                session_id = session_manager.create_session(language=detected_lang)
+
+        session_manager.add_transcription(session_id, cleaned, detected_lang)
+
+        return VoiceResponse(
+            session_id=session_id,
+            transcription=cleaned,
+            language=detected_lang,
+            confidence=1.0
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Text submission error: {e}", exc_info=True)
+        if 'session_id' in locals():
+            session_manager.set_error(session_id, str(e))
+        raise HTTPException(status_code=500, detail=f"Text submission failed: {str(e)}")
 
 @router.get("/languages")
 async def get_supported_languages():

@@ -1,5 +1,3 @@
-from crewai import Crew, Task, Agent
-from crewai.process import Process
 from typing import Dict, Any, List, Optional
 import logging
 import time
@@ -13,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class LegalAidCrew:
     def __init__(self):
-        self.llm = None
+        self.llm = llm_service
         self.voice_intake_agent = None
         self.evidence_agent = None
         self.legal_draft_agent = None
@@ -22,24 +20,10 @@ class LegalAidCrew:
 
     def _initialize_agents(self):
         logger.info("Initializing CrewAI agents...")
-        
-        try:
-            from langchain.chat_models import ChatOllama
-            self.llm = ChatOllama(
-                model="llama3.1:8b-instruct-q4_K_M",
-                base_url="http://127.0.0.1:11434",
-                temperature=0.7,
-                verbose=True
-            )
-            logger.info("LangChain Ollama LLM initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize LangChain Ollama: {e}")
-            logger.warning("Agents will use direct LLM service calls")
-            self.llm = None
-        
-        self.voice_intake_agent = VoiceIntakeAgent(self.llm or llm_service)
-        self.evidence_agent = EvidenceProcessorAgent(self.llm or llm_service)
-        self.legal_draft_agent = LegalDraftAgent(self.llm or llm_service, vector_service)
+
+        self.voice_intake_agent = VoiceIntakeAgent(self.llm)
+        self.evidence_agent = EvidenceProcessorAgent(self.llm)
+        self.legal_draft_agent = LegalDraftAgent(self.llm, vector_service)
         
         logger.info("All agents initialized successfully")
 
@@ -61,6 +45,9 @@ class LegalAidCrew:
                 transcription=transcription,
                 language=language
             )
+
+            if isinstance(complaint_data, dict):
+                complaint_data["_raw_transcription"] = transcription
             
             validation = self.voice_intake_agent.validate_complaint(complaint_data)
             complaint_data['_validation'] = validation
@@ -153,10 +140,19 @@ class LegalAidCrew:
         complaint_data: Dict[str, Any],
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
+        incident_description = complaint_data.get('incident_description') or ''
+        relief_sought = complaint_data.get('relief_sought')
+        applicable_laws = complaint_data.get('applicable_laws')
+
+        if not isinstance(relief_sought, list):
+            relief_sought = []
+        if not isinstance(applicable_laws, list):
+            applicable_laws = []
+
         query_parts = [
-            complaint_data.get('incident_description', ''),
-            ' '.join(complaint_data.get('relief_sought', [])),
-            ' '.join(complaint_data.get('applicable_laws', []))
+            str(incident_description),
+            ' '.join([str(x) for x in relief_sought if x]),
+            ' '.join([str(x) for x in applicable_laws if x])
         ]
         
         query = ' '.join([q for q in query_parts if q])[:500]
@@ -180,7 +176,13 @@ class LegalAidCrew:
             logger.error(f"Error retrieving legal context: {e}")
             return []
 
-    def create_crew_workflow(self) -> Crew:
+    def create_crew_workflow(self) -> Any:
+        try:
+            from crewai import Crew, Task
+            from crewai.process import Process
+        except Exception as e:
+            raise RuntimeError(f"CrewAI is not available: {e}")
+
         voice_intake_task = Task(
             description="Process voice transcription and extract structured complaint data",
             agent=self.voice_intake_agent.agent,
@@ -226,14 +228,14 @@ class LegalAidCrew:
                 self.evidence_agent,
                 self.legal_draft_agent
             ]),
-            "llm_available": self.llm is not None or llm_service.is_ready(),
+            "llm_available": llm_service.is_ready(),
             "vector_service_ready": vector_service.is_ready(),
             "crew_ready": self.crew is not None
         }
 
     def health_check(self) -> Dict[str, Any]:
         return {
-            "overall_status": "healthy" if self.llm_service.is_ready() else "degraded",
+            "overall_status": "healthy" if llm_service.is_ready() else "degraded",
             "llm_service": llm_service.check_model_status(),
             "vector_service": {
                 "ready": vector_service.is_ready(),

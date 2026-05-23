@@ -1,5 +1,5 @@
-from crewai import Agent
-from typing import Dict, Any, List
+import sys
+from typing import Dict, Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,15 @@ class EvidenceProcessorAgent:
         self.llm_service = llm_service
         self.agent = self._create_agent()
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Optional[Any]:
+        if sys.version_info >= (3, 14):
+            return None
+
+        try:
+            from crewai import Agent
+        except Exception:
+            return None
+
         return Agent(
             role="Expert Forensic Document Analyst",
             goal="Analyze uploaded evidence and validate consistency with voice complaint",
@@ -108,27 +116,83 @@ class EvidenceProcessorAgent:
                 temperature=0.3
             )
             
-            import json
             result_text = response.get('response', '')
-            
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end != 0:
-                json_str = result_text[json_start:json_end]
-                analysis_result = json.loads(json_str)
+            analysis_result = self._parse_json_object(result_text)
+            if analysis_result is not None:
                 logger.info(f"Evidence analysis complete: {len(analysis_result.get('evidence_analysis', []))} items analyzed")
                 return analysis_result
             else:
                 logger.error("No JSON found in response")
                 return self._create_empty_analysis(len(ocr_results))
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            return self._create_empty_analysis(len(ocr_results))
         except Exception as e:
             logger.error(f"Error processing evidence: {e}")
             return self._create_empty_analysis(len(ocr_results))
+
+    def _parse_json_object(self, text: str) -> Optional[Dict[str, Any]]:
+        import json
+
+        if not text:
+            return None
+
+        json_start = text.find('{')
+        json_end = text.rfind('}') + 1
+        if json_start == -1 or json_end <= json_start:
+            return None
+
+        candidate = text[json_start:json_end]
+        candidate = self._sanitize_json(candidate)
+
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            return None
+
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _sanitize_json(self, text: str) -> str:
+        out = []
+        in_string = False
+        escape = False
+
+        for ch in text:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+
+            if ch == '\\\\':
+                out.append(ch)
+                escape = True
+                continue
+
+            if ch == '"':
+                out.append(ch)
+                in_string = not in_string
+                continue
+
+            if in_string:
+                if ch == '\n':
+                    out.append('\\\\n')
+                    continue
+                if ch == '\r':
+                    out.append('\\\\r')
+                    continue
+                if ch == '\t':
+                    out.append('\\\\t')
+                    continue
+                if ord(ch) < 32:
+                    out.append(' ')
+                    continue
+                out.append(ch)
+            else:
+                if ord(ch) < 32 and ch not in ('\n', '\r', '\t'):
+                    continue
+                out.append(ch)
+
+        return ''.join(out)
 
     def _prepare_evidence_texts(self, ocr_results: List[Dict[str, Any]]) -> str:
         texts = []

@@ -8,11 +8,11 @@
 # Navigate to project
 cd c:\Users\arghy\Documents\trae_projects\Saathi
 
-# Install all dependencies
-pip install -r requirements.txt
+# Install uv (fast Python package manager) - Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm `https://astral.sh/uv/install.ps1`  | iex"
 
-# Install Streamlit (if not already installed)
-pip install streamlit
+# Install all dependencies
+uv pip install -r requirements.txt
 ```
 
 ### **Step 2: Start Ollama**
@@ -20,6 +20,9 @@ pip install streamlit
 Open a new terminal and run:
 
 ```bash
+# Install Ollama - Windows PowerShell
+irm `https://ollama.com/install.ps1`  | iex
+
 # Start Ollama server
 ollama serve
 
@@ -54,7 +57,7 @@ Open a third terminal and run:
 cd c:\Users\arghy\Documents\trae_projects\Saathi
 
 # Start Streamlit UI
-streamlit run ui/app.py --server.port 8501
+python -m streamlit run ui/app.py --server.port 8501
 ```
 
 Streamlit will open automatically in your browser at: http://localhost:8501
@@ -69,10 +72,15 @@ Navigate to: http://localhost:8501
 ### **2. Select Page**
 Click "Record Complaint" in the sidebar
 
-### **3. Record Voice**
-- Select language (Hindi, Bengali, or Tamil)
-- Click microphone button
-- Speak your complaint clearly
+### **3. Provide Complaint Input**
+- Choose one of:
+  - Microphone (browser permission required)
+  - Upload audio file
+  - Type complaint (for users who can't speak)
+- Pick language (Auto Detect recommended for mixed speech)
+- If using microphone and nothing is captured:
+  - Click "Request microphone permission"
+  - In browser site settings, set Microphone = Allow and select the correct input device (built-in/headset)
 - Include:
   - Your name and occupation
   - Respondent's name and details
@@ -92,7 +100,7 @@ Click "Submit for Transcription"
 - Click "Generate Documents" tab
 - Click "Generate Legal Notice & Case Summary"
 - Wait for processing (30-60 seconds)
-- Download DOCX and TXT files
+- Preview is shown in the UI and downloadable files are saved under `outputs/`
 
 ---
 
@@ -115,9 +123,22 @@ curl -X POST "http://127.0.0.1:8080/api/voice" \
   -F "language=hi"
 ```
 
+### **Submit Typed Complaint**
+```bash
+curl -X POST "http://127.0.0.1:8080/api/voice/text" \
+  -F "transcription=My salary is unpaid..." \
+  -F "language=auto"
+```
+
 ### **Check Status**
 ```bash
 curl http://127.0.0.1:8080/api/status/{session_id}
+```
+
+### **Suggest Missing Info (Async)**
+```bash
+curl -X POST "http://127.0.0.1:8080/api/status/{session_id}/questions"
+curl http://127.0.0.1:8080/api/status/{session_id}/questions
 ```
 
 ### **Generate Documents**
@@ -132,7 +153,7 @@ curl -X POST "http://127.0.0.1:8080/api/generate" \
 ## ⚙️ Configuration
 
 ### **Environment Variables (.env)**
-Create a `.env` file in the project root:
+Set values in `.env` in the project root:
 
 ```env
 # Ollama
@@ -143,14 +164,14 @@ OLLAMA_EMBED_MODEL=nomic-embed-text
 # Whisper (for speech-to-text)
 WHISPER_MODEL=tiny
 
-# ChromaDB (for knowledge base)
-CHROMA_PERSIST_DIR=knowledge_base/chroma_db
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+# Tesseract (OCR fallback when Surya OCR isn't available)
+# Set to your local tesseract.exe if it's not on PATH
+TESSERACT_CMD=C:\Users\arghy\Documents\trae_projects\Saathi\Tesseract-OCR\tesseract.exe
 
 # Application
 MAX_AUDIO_DURATION=30
 MAX_IMAGE_SIZE=10485760
-SUPPORTED_LANGUAGES=hi,bn,ta
+SUPPORTED_LANGUAGES=hi,bn,ta,en
 SESSION_TIMEOUT=3600
 
 # Server
@@ -205,12 +226,12 @@ If you encounter out of memory errors:
 
 ### **Minimum**
 - 8GB RAM
-- Python 3.9+
+- Python 3.10+
 - Windows 10+
 
 ### **Recommended**
 - 16GB RAM
-- Python 3.10+
+- Python 3.14+
 - Windows 11
 
 ### **Storage**
@@ -225,8 +246,9 @@ If you encounter out of memory errors:
 ┌─────────────────────────────────────┐
 │    Browser (Streamlit - :8501)      │
 │  ┌─────────────────────────────────┐ │
-│  │ Voice Recorder + File Upload   │ │
-│  │ Progress Display + Downloads    │ │
+│  │ Voice/Upload/Typed Input       │ │
+│  │ Evidence Upload + Progress     │ │
+│  │ Preview + Downloads            │ │
 │  └─────────────────────────────────┘ │
 └──────────────┬──────────────────────┘
                │ HTTP
@@ -244,8 +266,8 @@ If you encounter out of memory errors:
     ┌──────────┼──────────┬──────────┐
     │          │          │          │
     ▼          ▼          ▼          ▼
-  Whisper    Surya     Ollama    ChromaDB
-  (STT)     (OCR)     (LLM)     (Vectors)
+  Whisper    Surya/    Ollama    Local Vector
+  (STT)     Tesseract (LLM)     Store (JSONL)
 ```
 
 ---
@@ -288,12 +310,12 @@ saathi/
 │   ├── config.py               # Configuration
 │   ├── models/                # Database + Pydantic
 │   ├── services/              # STT, OCR, LLM, Vector, Document
-│   ├── agents/                # CrewAI agents
+│   ├── agents/                # Agent pipeline (Python)
 │   ├── api/routes/            # API endpoints
 │   └── utils/                 # Utilities
 ├── ui/
 │   ├── app.py                 # Streamlit entry
-│   ├── pages/                 # Multi-page app
+│   ├── pages/                 # Workflow page(s)
 │   └── components/            # Reusable components
 ├── tests/                     # Test suite
 ├── requirements.txt           # Dependencies

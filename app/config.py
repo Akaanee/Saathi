@@ -12,18 +12,18 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
-WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", str(BASE_DIR / "models" / "whisper"))
+WHISPER_MODEL_DIR = Path(os.getenv("WHISPER_MODEL_DIR", str(BASE_DIR / "models" / "whisper")))
 
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "knowledge_base" / "chroma_db"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 MAX_AUDIO_DURATION = int(os.getenv("MAX_AUDIO_DURATION", "30"))
 MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", str(10 * 1024 * 1024)))
-SUPPORTED_LANGUAGES = os.getenv("SUPPORTED_LANGUAGES", "hi,bn,ta").split(",")
+SUPPORTED_LANGUAGES = os.getenv("SUPPORTED_LANGUAGES", "hi,bn,ta,en").split(",")
 SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "3600"))
 
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", str(BASE_DIR / "outputs"))
-LOG_FILE = os.getenv("LOG_FILE", str(BASE_DIR / "logs" / "app.log"))
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "outputs")))
+LOG_FILE = Path(os.getenv("LOG_FILE", str(BASE_DIR / "logs" / "app.log")))
 
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "8080"))
@@ -32,7 +32,8 @@ UI_PORT = int(os.getenv("UI_PORT", "8501"))
 LANGUAGE_NAMES = {
     "hi": "Hindi",
     "bn": "Bengali",
-    "ta": "Tamil"
+    "ta": "Tamil",
+    "en": "English"
 }
 
 MEMORY_LIMITS = {

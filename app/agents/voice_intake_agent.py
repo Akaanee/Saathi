@@ -1,5 +1,5 @@
-from crewai import Agent
-from typing import Dict, Any
+import sys
+from typing import Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,15 @@ class VoiceIntakeAgent:
         self.llm_service = llm_service
         self.agent = self._create_agent()
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Optional[Any]:
+        if sys.version_info >= (3, 14):
+            return None
+
+        try:
+            from crewai import Agent
+        except Exception:
+            return None
+
         return Agent(
             role="Expert Legal Intake Specialist for Indian Courts",
             goal="Transform raw voice transcription into a perfectly structured legal complaint in JSON format",
@@ -103,27 +111,83 @@ class VoiceIntakeAgent:
                 temperature=0.3
             )
             
-            import json
             result_text = response.get('response', '')
-            
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end != 0:
-                json_str = result_text[json_start:json_end]
-                structured_data = json.loads(json_str)
+            structured_data = self._parse_json_object(result_text)
+            if structured_data is not None:
                 logger.info("Successfully structured complaint data")
                 return structured_data
             else:
                 logger.error("No JSON found in response")
                 return self._create_empty_complaint()
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            return self._create_empty_complaint()
         except Exception as e:
             logger.error(f"Error processing transcription: {e}")
             return self._create_empty_complaint()
+
+    def _parse_json_object(self, text: str) -> Optional[Dict[str, Any]]:
+        import json
+
+        if not text:
+            return None
+
+        json_start = text.find('{')
+        json_end = text.rfind('}') + 1
+        if json_start == -1 or json_end <= json_start:
+            return None
+
+        candidate = text[json_start:json_end]
+        candidate = self._sanitize_json(candidate)
+
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            return None
+
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _sanitize_json(self, text: str) -> str:
+        out = []
+        in_string = False
+        escape = False
+
+        for ch in text:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+
+            if ch == '\\\\':
+                out.append(ch)
+                escape = True
+                continue
+
+            if ch == '"':
+                out.append(ch)
+                in_string = not in_string
+                continue
+
+            if in_string:
+                if ch == '\n':
+                    out.append('\\\\n')
+                    continue
+                if ch == '\r':
+                    out.append('\\\\r')
+                    continue
+                if ch == '\t':
+                    out.append('\\\\t')
+                    continue
+                if ord(ch) < 32:
+                    out.append(' ')
+                    continue
+                out.append(ch)
+            else:
+                if ord(ch) < 32 and ch not in ('\n', '\r', '\t'):
+                    continue
+                out.append(ch)
+
+        return ''.join(out)
 
     def _create_empty_complaint(self) -> Dict[str, Any]:
         return {

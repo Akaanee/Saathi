@@ -74,6 +74,7 @@ class StatusResponse(BaseModel):
     progress: int = Field(ge=0, le=100)
     current_agent: Optional[str] = None
     output_preview: Optional[str] = None
+    error: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

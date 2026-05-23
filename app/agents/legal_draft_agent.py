@@ -1,4 +1,4 @@
-from crewai import Agent
+import sys
 from typing import Dict, Any, List, Optional
 import logging
 
@@ -10,7 +10,15 @@ class LegalDraftAgent:
         self.vector_service = vector_service
         self.agent = self._create_agent()
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Optional[Any]:
+        if sys.version_info >= (3, 14):
+            return None
+
+        try:
+            from crewai import Agent
+        except Exception:
+            return None
+
         return Agent(
             role="Senior Legal Draftsman specializing in Indian Labor Law",
             goal="Generate comprehensive legal notice and case summary using knowledge base context",
@@ -105,24 +113,15 @@ class LegalDraftAgent:
                 temperature=0.5
             )
             
-            import json
             result_text = response.get('response', '')
-            
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end != 0:
-                json_str = result_text[json_start:json_end]
-                notice_data = json.loads(json_str)
+            notice_data = self._parse_json_object(result_text)
+            if notice_data is not None:
                 logger.info("Legal notice generated successfully")
                 return notice_data
             else:
                 logger.error("No JSON found in response")
                 return self._create_fallback_notice(complaint_data)
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            return self._create_fallback_notice(complaint_data)
         except Exception as e:
             logger.error(f"Error generating legal notice: {e}")
             return self._create_fallback_notice(complaint_data)
@@ -165,7 +164,7 @@ class LegalDraftAgent:
         OUTPUT FORMAT:
         Return ONLY valid JSON with this structure:
         {{
-            "case_id": "SAATHI-{YYYYMMDD}-{random_id}",
+            "case_id": "SAATHI-YYYYMMDD-random_id",
             "summary_type": "string (e.g., Labor Dispute, Wage Theft)",
             "parties": {{
                 "complainant": "string",
@@ -198,24 +197,15 @@ class LegalDraftAgent:
                 temperature=0.5
             )
             
-            import json
             result_text = response.get('response', '')
-            
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end != 0:
-                json_str = result_text[json_start:json_end]
-                summary_data = json.loads(json_str)
+            summary_data = self._parse_json_object(result_text)
+            if summary_data is not None:
                 logger.info("Case summary generated successfully")
                 return summary_data
             else:
                 logger.error("No JSON found in response")
                 return self._create_fallback_summary(complaint_data)
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            return self._create_fallback_summary(complaint_data)
         except Exception as e:
             logger.error(f"Error generating case summary: {e}")
             return self._create_fallback_summary(complaint_data)
@@ -265,7 +255,74 @@ class LegalDraftAgent:
         
         return "\n".join(summary_parts)
 
+    def _parse_json_object(self, text: str) -> Optional[Dict[str, Any]]:
+        import json
+
+        if not text:
+            return None
+
+        json_start = text.find('{')
+        json_end = text.rfind('}') + 1
+        if json_start == -1 or json_end <= json_start:
+            return None
+
+        candidate = text[json_start:json_end]
+        candidate = self._sanitize_json(candidate)
+
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            return None
+
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _sanitize_json(self, text: str) -> str:
+        out: List[str] = []
+        in_string = False
+        escape = False
+
+        for ch in text:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+
+            if ch == '\\\\':
+                out.append(ch)
+                escape = True
+                continue
+
+            if ch == '"':
+                out.append(ch)
+                in_string = not in_string
+                continue
+
+            if in_string:
+                if ch == '\n':
+                    out.append('\\\\n')
+                    continue
+                if ch == '\r':
+                    out.append('\\\\r')
+                    continue
+                if ch == '\t':
+                    out.append('\\\\t')
+                    continue
+                if ord(ch) < 32:
+                    out.append(' ')
+                    continue
+                out.append(ch)
+            else:
+                if ord(ch) < 32 and ch not in ('\n', '\r', '\t'):
+                    continue
+                out.append(ch)
+
+        return ''.join(out)
+
     def _create_fallback_notice(self, complaint_data: Dict[str, Any]) -> Dict[str, Any]:
+        raw = complaint_data.get("_raw_transcription", "")
+        incident_desc = complaint_data.get("incident_description") or raw or "See attached complaint transcription."
         return {
             "header": f"LEGAL NOTICE\nDate: [Current Date]",
             "addressee": f"To,\n{complaint_data.get('respondent_name', '[Respondent Name]')}\n[Address]",
@@ -278,7 +335,8 @@ class LegalDraftAgent:
 2. That the Respondent has committed violations as described in the complaint 
    dated {complaint_data.get('incident_date', '[Date]')} at {complaint_data.get('incident_location', '[Location]')}.
 
-3. The detailed incident description is as per the attached complaint transcription.
+3. Incident details:
+{incident_desc}
             """.strip(),
             "legal_grounds": complaint_data.get('applicable_laws', ['Applicable provisions of law']),
             "relief_sought_section": "\n".join([f"{i+1}. {r}" for i, r in enumerate(complaint_data.get('relief_sought', ['Relief as per law']))]),
@@ -291,6 +349,8 @@ class LegalDraftAgent:
     def _create_fallback_summary(self, complaint_data: Dict[str, Any]) -> Dict[str, Any]:
         from datetime import datetime
         import random
+        raw = complaint_data.get("_raw_transcription", "")
+        incident_desc = complaint_data.get("incident_description") or raw or "See full complaint"
         
         return {
             "case_id": f"SAATHI-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}",
@@ -303,7 +363,7 @@ class LegalDraftAgent:
             "key_facts": [
                 f"Incident occurred on {complaint_data.get('incident_date', 'unknown date')}",
                 f"Location: {complaint_data.get('incident_location', 'unknown')}",
-                complaint_data.get('incident_description', 'See full complaint')[:200]
+                incident_desc[:200]
             ],
             "legal_framework": complaint_data.get('applicable_laws', ['Labor law provisions apply']),
             "evidence_summary": "Based on verbal complaint - supporting documents recommended",

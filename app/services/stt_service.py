@@ -11,6 +11,7 @@ class STTService:
         self.model = None
         self.model_loaded = False
         self.model_name = None
+        self.provider = None
         self._initialize()
 
     def _initialize(self):
@@ -18,7 +19,7 @@ class STTService:
             from faster_whisper import WhisperModel
             
             model_size = os.getenv("WHISPER_MODEL", "tiny")
-            compute_type = "int8" if os.getenv("WHISPER_MODEL").startswith("tiny") else "float16"
+            compute_type = "int8" if model_size.startswith("tiny") else "float16"
             
             logger.info(f"Loading Whisper model: {model_size} with compute type: {compute_type}")
             
@@ -30,6 +31,7 @@ class STTService:
             
             self.model_loaded = True
             self.model_name = model_size
+            self.provider = "faster-whisper"
             logger.info(f"Whisper model loaded successfully: {model_size}")
             
         except ImportError:
@@ -39,11 +41,13 @@ class STTService:
                 self.model = whisper.load_model("tiny")
                 self.model_loaded = True
                 self.model_name = "tiny"
+                self.provider = "openai-whisper"
                 logger.info("OpenAI Whisper tiny model loaded successfully")
             except ImportError:
                 logger.error("No Whisper implementation available. Install faster-whisper or openai-whisper")
                 self.model = None
                 self.model_loaded = False
+                self.provider = None
 
     def transcribe_audio(
         self, 
@@ -56,7 +60,7 @@ class STTService:
         try:
             audio_array = self._prepare_audio(audio_data)
             
-            if hasattr(self.model, 'transcribe'):
+            if self.provider == "openai-whisper":
                 result = self.model.transcribe(
                     audio_array,
                     language=language,
@@ -80,9 +84,7 @@ class STTService:
                         for seg in segments
                     ]
                 }
-            else:
-                from faster_whisper import decode_logger
-                
+            elif self.provider == "faster-whisper":
                 segments, info = self.model.transcribe(
                     audio_array,
                     language=language,
@@ -106,6 +108,8 @@ class STTService:
                         for seg in segment_list
                     ]
                 }
+            else:
+                raise RuntimeError("Whisper model provider not recognized")
 
         except Exception as e:
             logger.error(f"Transcription error: {str(e)}")
@@ -125,14 +129,14 @@ class STTService:
                 resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
                 audio_tensor = resampler(audio_tensor)
             
-            audio_np = audio_tensor.squeeze().numpy()
-            
+            audio_np = audio_tensor.squeeze().detach().cpu().numpy()
+            audio_np = np.ascontiguousarray(audio_np.astype(np.float32, copy=False))
             return audio_np
             
         except ImportError:
             try:
                 import soundfile as sf
-                audio_np, sr = sf.read(io.BytesIO(audio_data))
+                audio_np, sr = sf.read(io.BytesIO(audio_data), dtype="float32")
                 
                 if len(audio_np.shape) > 1:
                     audio_np = np.mean(audio_np, axis=1)
@@ -140,7 +144,7 @@ class STTService:
                 if sr != 16000:
                     import librosa
                     audio_np = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
-                
+                audio_np = np.ascontiguousarray(np.asarray(audio_np, dtype=np.float32))
                 return audio_np
                 
             except ImportError:
@@ -179,14 +183,16 @@ class STTService:
         try:
             audio_array = self._prepare_audio(audio_data)
             
-            if hasattr(self.model, 'transcribe'):
+            if self.provider == "openai-whisper":
                 result = self.model.transcribe(audio_array, task="translate")
                 detected_lang = result.get('language', 'unknown')
                 lang_prob = 0.9
-            else:
+            elif self.provider == "faster-whisper":
                 _, info = self.model.transcribe(audio_array, vad_filter=True)
                 detected_lang = info.language
                 lang_prob = info.language_probability
+            else:
+                raise RuntimeError("Whisper model provider not recognized")
             
             supported_langs = {
                 'hi': 'Hindi',
@@ -216,7 +222,7 @@ class STTService:
         return {
             "loaded": self.model_loaded,
             "model_name": self.model_name,
-            "provider": "faster-whisper" if hasattr(self.model, 'transcribe') and not hasattr(self.model, 'audio_transform') else "openai-whisper"
+            "provider": self.provider
         }
 
 

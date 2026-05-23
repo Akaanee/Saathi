@@ -26,6 +26,37 @@ def upload_evidence(session_id):
         
         if st.button("🚀 Process Evidence", type="primary"):
             return process_evidence(uploaded_files, session_id)
+
+    st.markdown("---")
+    st.subheader("📝 Add Manual Evidence Text")
+    manual_text = st.text_area(
+        "If OCR fails, paste the text from the document here (or type key details).",
+        height=140,
+        key="manual_evidence_text"
+    )
+    manual_filename = st.text_input("Label", value="manual_evidence.txt", key="manual_evidence_filename")
+    if st.button("➕ Add Manual Evidence", use_container_width=True):
+        if not manual_text.strip():
+            st.warning("⚠️ Manual evidence text is empty")
+        else:
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/evidence/manual",
+                    data={"session_id": session_id, "text": manual_text, "filename": manual_filename},
+                    timeout=20
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    extracted_texts = st.session_state.get('extracted_texts', [])
+                    extracted_texts.extend(result.get("extracted_texts", []))
+                    st.session_state['extracted_texts'] = extracted_texts
+                    st.session_state['evidence_count'] = len(extracted_texts)
+                    st.success("✅ Manual evidence added")
+                    show_evidence_summary()
+                else:
+                    st.error(f"❌ Failed to add manual evidence: {response.text}")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
     
     return None
 
@@ -79,6 +110,7 @@ def process_evidence(uploaded_files, session_id):
                 return result
             else:
                 st.error(f"❌ Evidence processing failed: {response.text}")
+                st.info("💡 If OCR is not available, use the 'Add Manual Evidence Text' section below.")
                 return None
                 
         except requests.exceptions.ConnectionError:

@@ -5,6 +5,11 @@ import logging
 import sys
 from pathlib import Path
 
+# Ensure repository root is on sys.path when running this file directly
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from app.api.routes import voice_router, evidence_router, status_router, generate_router
 from app.models.schemas import HealthResponse
 from app.config import API_HOST, API_PORT, PATHS

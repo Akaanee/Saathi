@@ -1,6 +1,7 @@
 import io
 import logging
 from typing import Dict, Any, List
+import os
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 
@@ -10,6 +11,7 @@ class OCRService:
     def __init__(self):
         self.surya_available = False
         self.tesseract_available = False
+        self.tesseract_error = None
         self._initialize()
 
     def _initialize(self):
@@ -29,8 +31,18 @@ class OCRService:
             try:
                 import pytesseract
                 self.pytesseract = pytesseract
-                self.tesseract_available = True
-                logger.info("Tesseract OCR loaded successfully")
+                cmd = os.getenv("TESSERACT_CMD")
+                if cmd:
+                    self.pytesseract.pytesseract.tesseract_cmd = cmd
+                try:
+                    self.pytesseract.get_tesseract_version()
+                    self.tesseract_available = True
+                    self.tesseract_error = None
+                    logger.info("Tesseract OCR loaded successfully")
+                except Exception as e:
+                    self.tesseract_available = False
+                    self.tesseract_error = str(e)
+                    logger.error(f"Tesseract binary not available: {e}")
                 
             except ImportError:
                 logger.error("No OCR implementation available. Install surya-ocr or pytesseract")
@@ -172,12 +184,26 @@ class OCRService:
         confidences = []
         
         for i, text in enumerate(data['text']):
-            conf = int(data['conf'][i])
-            if conf > 30 and text.strip():
+            try:
+                conf = float(data['conf'][i])
+            except Exception:
+                conf = -1.0
+
+            if conf < 0:
+                continue
+
+            if text and text.strip():
                 text_lines.append(text)
                 confidences.append(conf / 100.0)
         
         full_text = "\n".join(text_lines)
+        if not full_text.strip():
+            try:
+                full_text = self.pytesseract.image_to_string(image, lang=tess_lang, config=custom_config) or ""
+                full_text = full_text.strip()
+            except Exception:
+                full_text = ""
+
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
         
         return {
@@ -227,6 +253,7 @@ class OCRService:
         return {
             "surya_available": self.surya_available,
             "tesseract_available": self.tesseract_available,
+            "tesseract_error": self.tesseract_error,
             "primary_engine": "surya" if self.surya_available else "tesseract"
         }
 

@@ -94,11 +94,33 @@ class SessionManager:
         )
         self._add_log(session_id, "STT", "completed", f"Transcribed in {language}")
 
+    def update_transcription(self, session_id: str, transcription: str):
+        self.update_session(session_id, transcription=transcription)
+        self._add_log(session_id, "STT", "updated", "Transcription edited by user")
+
     def add_evidence(self, session_id: str, evidence_result: Dict[str, Any]):
         with self._locks.get(session_id, self._global_lock):
             if session_id in self._sessions:
                 self._sessions[session_id]['evidence_results'].append(evidence_result)
                 self._sessions[session_id]['updated_at'] = datetime.utcnow()
+
+    def add_user_notes(self, session_id: str, notes: str):
+        notes_text = (notes or "").strip()
+        if not notes_text:
+            return
+
+        with self._locks.get(session_id, self._global_lock):
+            if session_id not in self._sessions:
+                return
+
+            metadata = self._sessions[session_id].get('metadata') or {}
+            existing = metadata.get("user_notes", "")
+            if existing:
+                metadata["user_notes"] = f"{existing}\n\n{notes_text}"
+            else:
+                metadata["user_notes"] = notes_text
+            self._sessions[session_id]['metadata'] = metadata
+            self._sessions[session_id]['updated_at'] = datetime.utcnow()
 
     def set_structured_complaint(self, session_id: str, complaint_data: Dict[str, Any]):
         self.update_session(

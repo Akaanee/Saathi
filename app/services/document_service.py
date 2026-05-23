@@ -33,6 +33,55 @@ class DocumentService:
         style = doc.styles['Normal']
         style.font.name = 'Times New Roman'
         style.font.size = Pt(12)
+
+        if isinstance(complaint_data, dict) and any(k in complaint_data for k in ["body", "addressee", "subject", "header"]):
+            title_text = str(complaint_data.get("header") or "LEGAL NOTICE").strip()
+            title = doc.add_heading(title_text, 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            addressee = str(complaint_data.get("addressee") or "").strip()
+            if addressee:
+                doc.add_paragraph(addressee)
+                doc.add_paragraph()
+
+            subject_text = str(complaint_data.get("subject") or "").strip()
+            if subject_text:
+                subject = doc.add_heading(subject_text, level=1)
+                subject.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                doc.add_paragraph()
+
+            body = str(complaint_data.get("body") or "").strip()
+            if body:
+                doc.add_paragraph(body)
+                doc.add_paragraph()
+
+            legal_grounds = complaint_data.get("legal_grounds")
+            if isinstance(legal_grounds, list) and legal_grounds:
+                doc.add_heading("LEGAL GROUNDS", level=2)
+                for g in legal_grounds:
+                    doc.add_paragraph(str(g), style='List Bullet')
+                doc.add_paragraph()
+
+            relief = str(complaint_data.get("relief_sought_section") or "").strip()
+            if relief:
+                doc.add_heading("RELIEF SOUGHT", level=2)
+                doc.add_paragraph(relief)
+                doc.add_paragraph()
+
+            ultimatum = str(complaint_data.get("notice_ultimatum") or "").strip()
+            if ultimatum:
+                doc.add_heading("NOTICE", level=2)
+                doc.add_paragraph(ultimatum)
+                doc.add_paragraph()
+
+            signature = str(complaint_data.get("signature_block") or "").strip()
+            if signature:
+                doc.add_paragraph(signature)
+
+            buffer = io.BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            return buffer.getvalue()
         
         title = doc.add_heading('LEGAL NOTICE', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER

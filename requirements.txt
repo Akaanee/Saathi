@@ -4,12 +4,7 @@ streamlit>=1.31.0
 python-multipart>=0.0.6
 aiofiles>=23.2.1
 
-crewai
-langchain-core>=0.1.20
-langchain-community>=0.0.20
 ollama
-chromadb
-sentence-transformers
 
 pytesseract>=0.3.10
 Pillow
@@ -26,3 +21,4 @@ python-dotenv>=1.0.0
 pydantic>=2.6.0
 sqlalchemy>=2.0.25
 psutil>=5.9.8
+pytest>=8.0.0

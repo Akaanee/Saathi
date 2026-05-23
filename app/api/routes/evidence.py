@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/evidence", tags=["Evidence"])
 
 @router.post("", response_model=EvidenceResponse)
 async def upload_evidence(
-    files: List[UploadFile] = File(..., description="Image files (JPG, PNG)"),
+    files: List[UploadFile] = File(..., description="Image files (JPG, PNG, WEBP)"),
     session_id: str = Form(..., description="Session ID")
 ):
     start_time = time.time()
@@ -28,6 +28,13 @@ async def upload_evidence(
                 detail=f"Session {session_id} not found"
             )
         
+        if not ocr_service.is_ready():
+            engine = ocr_service.get_engine_info()
+            raise HTTPException(
+                status_code=503,
+                detail=f"OCR engine not available. Details: {engine}"
+            )
+
         extracted_texts = []
         
         for i, file in enumerate(files):
@@ -41,6 +48,8 @@ async def upload_evidence(
                 image_data = await file.read()
                 
                 language_hint = session.get('language', 'en')
+                if not language_hint or language_hint == "auto":
+                    language_hint = "en"
                 
                 logger.info(f"Processing evidence {i+1}/{len(files)}: {file.filename}")
                 
@@ -82,6 +91,15 @@ async def upload_evidence(
             )
         
         successful_extractions = sum(1 for e in extracted_texts if e.get('text'))
+        if successful_extractions == 0:
+            engine = ocr_service.get_engine_info()
+            hint = ""
+            if engine.get("primary_engine") == "tesseract" and not engine.get("tesseract_available"):
+                hint = "Tesseract OCR is not installed or not on PATH. Install Tesseract and restart the backend."
+            raise HTTPException(
+                status_code=400,
+                detail=f"No text could be extracted from the uploaded images. {hint} OCR engine info: {engine}"
+            )
         logger.info(f"Evidence processing complete: {successful_extractions}/{len(files)} successful in {processing_time:.1f}s")
         
         return EvidenceResponse(
@@ -107,3 +125,38 @@ async def get_supported_formats():
         "max_file_size_mb": 10,
         "recommended": ["jpg", "png"]
     }
+
+@router.post("/manual", response_model=EvidenceResponse)
+async def add_manual_evidence(
+    session_id: str = Form(..., description="Session ID"),
+    text: str = Form(..., description="Manually provided evidence text"),
+    filename: str = Form("manual.txt", description="Display filename")
+):
+    start_time = time.time()
+
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    content = (text or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Manual evidence text is empty")
+
+    evidence_item = {
+        "filename": filename,
+        "text": content,
+        "confidence": 1.0,
+        "detected_language": session.get("language") or "unknown",
+        "word_count": len(content.split()),
+        "line_count": len(content.splitlines()),
+        "bboxes": []
+    }
+
+    session_manager.add_evidence(session_id, evidence_item)
+    processing_time = time.time() - start_time
+
+    return EvidenceResponse(
+        session_id=session_id,
+        extracted_texts=[evidence_item],
+        processing_time=processing_time
+    )
